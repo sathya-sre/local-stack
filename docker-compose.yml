@@ -1,0 +1,46 @@
+version: '3.8'
+services:
+  localstack:
+    container_name: localstack-main
+    image: localstack/localstack
+    ports:
+      - "127.0.0.1:4566:4566"            # LocalStack Gateway
+      - "127.0.0.1:4510-4559:4510-4559"  # External services port range
+    environment:
+      # LocalStack configuration: https://docs.localstack.cloud/references/configuration/
+      - DEBUG=${DEBUG-1}
+      - PERSISTENCE=${PERSISTENCE-1}
+      - LAMBDA_EXECUTOR=${LAMBDA_EXECUTOR-docker}
+      - LOCALSTACK_API_KEY=${LOCALSTACK_API_KEY-}  # only required for Pro features
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - SERVICES=s3,sqs,lambda,dynamodb,apigateway,sns,iam,cloudformation,logs,events
+      - DATA_DIR=/tmp/localstack/data
+      - LAMBDA_REMOTE_DOCKER=false
+      - LAMBDA_DOCKER_NETWORK=localstack-demo_default
+      - CORS=*
+      - SKIP_SSL_CERT_DOWNLOAD=1
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  # Optional: LocalStack Web UI (Pro feature)
+  # Uncomment if you have LocalStack Pro
+  # localstack-ui:
+  #   container_name: localstack-ui
+  #   image: localstack/localstack-web
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     - LOCALSTACK_URL=http://localstack:4566
+  #   depends_on:
+  #     - localstack
+
+networks:
+  default:
+    name: localstack-demo_default

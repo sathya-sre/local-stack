@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LocalStack Demo Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+
+Resources:
+  # S3 Bucket
+  DemoBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'localstack-demo-${Environment}'
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt DemoQueue.Arn
+
+  # SQS Queue
+  DemoQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub 'localstack-demo-queue-${Environment}'
+      VisibilityTimeoutSeconds: 60
+      MessageRetentionPeriod: 1209600
+
+  # DynamoDB Table
+  DemoTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: !Sub 'localstack-demo-table-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: 'id'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'id'
+          KeyType: 'HASH'
+
+  # SNS Topic
+  DemoTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      TopicName: !Sub 'localstack-demo-topic-${Environment}'
+      DisplayName: 'LocalStack Demo Topic'
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'localstack-demo-lambda-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: DemoLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 'sqs:SendMessage'
+                  - 'sqs:ReceiveMessage'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:GetItem'
+                  - 'sns:Publish'
+                Resource: '*'
+
+  # Lambda Function
+  DemoLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub 'localstack-demo-function-${Environment}'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          
+          def lambda_handler(event, context):
+              print(f"Received event: {json.dumps(event)}")
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({
+                      'message': 'Hello from LocalStack Lambda!',
+                      'event': event
+                  })
+              }
+
+  # API Gateway
+  DemoApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: !Sub 'localstack-demo-api-${Environment}'
+      Description: 'LocalStack Demo API'
+
+  DemoApiResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref DemoApi
+      ParentId: !GetAtt DemoApi.RootResourceId
+      PathPart: 'demo'
+
+  DemoApiMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref DemoApi
+      ResourceId: !Ref DemoApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DemoLambdaFunction.Arn}/invocations'
+
+  DemoApiDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    DependsOn: DemoApiMethod
+    Properties:
+      RestApiId: !Ref DemoApi
+      StageName: !Ref Environment
+
+  # Lambda Permission for API Gateway
+  LambdaApiGatewayPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref DemoLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub '${DemoApi}/*/GET/demo'
+
+Outputs:
+  BucketName:
+    Description: 'S3 Bucket Name'
+    Value: !Ref DemoBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+
+  QueueUrl:
+    Description: 'SQS Queue URL'
+    Value: !Ref DemoQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-QueueUrl'
+
+  TableName:
+    Description: 'DynamoDB Table Name'
+    Value: !Ref DemoTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TableName'
+
+  TopicArn:
+    Description: 'SNS Topic ARN'
+    Value: !Ref DemoTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-TopicArn'
+
+  ApiEndpoint:
+    Description: 'API Gateway Endpoint'
+    Value: !Sub 'https://${DemoApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/demo'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  LambdaFunctionArn:
+    Description: 'Lambda Function ARN'
+    Value: !GetAtt DemoLambdaFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'
